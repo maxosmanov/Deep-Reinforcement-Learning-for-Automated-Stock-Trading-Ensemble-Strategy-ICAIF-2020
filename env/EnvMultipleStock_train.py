@@ -14,7 +14,7 @@ HMAX_NORMALIZE = 100
 # initial amount of money we have in our account
 INITIAL_ACCOUNT_BALANCE=1000000
 # total number of stocks in our portfolio
-STOCK_DIM = 30
+STOCK_DIM = 91
 # transaction fee: 1/1000 reasonable percentage
 TRANSACTION_FEE_PERCENT = 0.001
 REWARD_SCALING = 1e-4
@@ -33,18 +33,28 @@ class StockEnvTrain(gym.Env):
         self.action_space = spaces.Box(low = -1, high = 1,shape = (STOCK_DIM,)) 
         # Shape = 181: [Current Balance]+[prices 1-30]+[owned shares 1-30] 
         # +[macd 1-30]+ [rsi 1-30] + [cci 1-30] + [adx 1-30]
-        self.observation_space = spaces.Box(low=0, high=np.inf, shape = (181,))
         # load data from a pandas dataframe
         self.data = self.df.loc[self.day,:]
         self.terminal = False             
         # initalize state
+        #self.state = [INITIAL_ACCOUNT_BALANCE] + \
+        #              self.data.adjcp.values.tolist() + \
+        #              [0]*STOCK_DIM + \
+        #              self.data.macd.values.tolist() + \
+        #              self.data.rsi.values.tolist() + \
+        #              self.data.cci.values.tolist() + \
+        #              self.data.adx.values.tolist()
+        #self.observation_space = spaces.Box(low=0, high=np.inf, shape = (181,))
         self.state = [INITIAL_ACCOUNT_BALANCE] + \
-                      self.data.adjcp.values.tolist() + \
-                      [0]*STOCK_DIM + \
-                      self.data.macd.values.tolist() + \
-                      self.data.rsi.values.tolist() + \
-                      self.data.cci.values.tolist() + \
-                      self.data.adx.values.tolist()
+                       self.data.adjcp.values.tolist() + \
+                      [0]*STOCK_DIM
+
+        for col in self.data.columns[7:-1]:
+            self.state += self.data[col].values.tolist()
+
+        #self.observation_space = spaces.Box(low=0, high=np.inf, shape = (181,))
+        self.observation_space = spaces.Box(low=0, high=np.inf, shape=(len(self.state),))
+
         # initialize reward
         self.reward = 0
         self.cost = 0
@@ -147,13 +157,20 @@ class StockEnvTrain(gym.Env):
             self.data = self.df.loc[self.day,:]         
             #load next state
             # print("stock_shares:{}".format(self.state[29:]))
-            self.state =  [self.state[0]] + \
-                    self.data.adjcp.values.tolist() + \
-                    list(self.state[(STOCK_DIM+1):(STOCK_DIM*2+1)]) + \
-                    self.data.macd.values.tolist() + \
-                    self.data.rsi.values.tolist() + \
-                    self.data.cci.values.tolist() + \
-                    self.data.adx.values.tolist()
+            #self.state =  [self.state[0]] + \
+            #        self.data.adjcp.values.tolist() + \
+            #        list(self.state[(STOCK_DIM+1):(STOCK_DIM*2+1)]) + \
+            #        self.data.macd.values.tolist() + \
+            #        self.data.rsi.values.tolist() + \
+            #        self.data.cci.values.tolist() + \
+            #       self.data.adx.values.tolist()
+
+            self.state = [self.state[0]] + \
+                         self.data.adjcp.values.tolist() + \
+                         list(self.state[(STOCK_DIM + 1):(STOCK_DIM * 2 + 1)])
+
+            for col in self.data.columns[7:-1]:
+                self.state += self.data[col].values.tolist()
             
             end_total_asset = self.state[0]+ \
             sum(np.array(self.state[1:(STOCK_DIM+1)])*np.array(self.state[(STOCK_DIM+1):(STOCK_DIM*2+1)]))
@@ -179,13 +196,19 @@ class StockEnvTrain(gym.Env):
         self.terminal = False 
         self.rewards_memory = []
         #initiate state
+       # self.state = [INITIAL_ACCOUNT_BALANCE] + \
+       #               self.data.adjcp.values.tolist() + \
+       #               [0]*STOCK_DIM + \
+       #               self.data.macd.values.tolist() + \
+       #               self.data.rsi.values.tolist() + \
+       #               self.data.cci.values.tolist() + \
+       #               self.data.adx.values.tolist()
+
         self.state = [INITIAL_ACCOUNT_BALANCE] + \
-                      self.data.adjcp.values.tolist() + \
-                      [0]*STOCK_DIM + \
-                      self.data.macd.values.tolist() + \
-                      self.data.rsi.values.tolist() + \
-                      self.data.cci.values.tolist() + \
-                      self.data.adx.values.tolist() 
+                     self.data.adjcp.values.tolist() + \
+                     [0]*STOCK_DIM
+        for col in self.data.columns[7:-1]:
+            self.state += self.data[col].values.tolist()
         # iteration += 1 
         return self.state
     
