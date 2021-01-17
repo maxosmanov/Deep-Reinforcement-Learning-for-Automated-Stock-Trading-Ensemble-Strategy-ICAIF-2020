@@ -1,8 +1,8 @@
 # common library
 import pandas as pd
 import numpy as np
+from datetime import date
 import time
-import gym
 
 # RL models from stable-baselines
 from stable_baselines import GAIL, SAC
@@ -70,7 +70,6 @@ def train_PPO(env_train, model_name, timesteps=50000):
 
     start = time.time()
     model = PPO2('MlpPolicy', env_train, ent_coef = 0.005, nminibatches = 8)
-    #model = PPO2('MlpPolicy', env_train, ent_coef = 0.005)
 
     model.learn(total_timesteps=timesteps)
     end = time.time()
@@ -124,7 +123,7 @@ def DRL_prediction(df,
         action, _states = model.predict(obs_trade)
         obs_trade, rewards, dones, info = env_trade.step(action)
         if i == (len(trade_data.index.unique()) - 2):
-            # print(env_test.render())
+            #print(env_test.render())
             last_state = env_trade.render()
 
     df_last_state = pd.DataFrame({'last_state': last_state})
@@ -144,14 +143,22 @@ def get_validation_sharpe(iteration):
     df_total_value = pd.read_csv('results/account_value_validation_{}.csv'.format(iteration), index_col=0)
     df_total_value.columns = ['account_value_train']
     df_total_value['daily_return'] = df_total_value.pct_change(1)
-    sharpe = (4 ** 0.5) * df_total_value['daily_return'].mean() / \
+    if df_total_value['daily_return'].std()!=0:
+        sharpe = (4 ** 0.5) * df_total_value['daily_return'].mean() / \
              df_total_value['daily_return'].std()
+    else:
+        sharpe=0
+    #sharpe = (4 ** 0.5) * df_total_value['daily_return'].mean() / \
+             #df_total_value['daily_return'].std()
     return sharpe
 
 
 def run_ensemble_strategy(df, unique_trade_date, rebalance_window, validation_window) -> None:
     """Ensemble Strategy that combines PPO, A2C and DDPG"""
     print("============Start Ensemble Strategy============")
+    file_name='log_'+str(date.today())+'.txt'
+    file_object = open(file_name, 'a')
+    file_object.write('\n============Start Ensemble Strategy============')
     # for ensemble model, it's necessary to feed the last state
     # of the previous model to the current model as the initial state
     last_state_ensemble = []
@@ -164,13 +171,15 @@ def run_ensemble_strategy(df, unique_trade_date, rebalance_window, validation_wi
 
     # based on the analysis of the in-sample data
     #turbulence_threshold = 140
-    insample_turbulence = df[(df.datadate<20151000) & (df.datadate>=20090000)]
+    insample_turbulence = df[(df.datadate<'2014-01-01') & (df.datadate>='2007-04-01')]
+    #insample_turbulence = df[(df.datadate<20151000) & (df.datadate>=20090000)]
     insample_turbulence = insample_turbulence.drop_duplicates(subset=['datadate'])
     insample_turbulence_threshold = np.quantile(insample_turbulence.turbulence.values, .90)
 
     start = time.time()
     for i in range(rebalance_window + validation_window, len(unique_trade_date), rebalance_window):
         print("============================================")
+        file_object.write('\n============================================')
         ## initial state is empty
         if i - rebalance_window - validation_window == 0:
             # inital state
@@ -185,8 +194,6 @@ def run_ensemble_strategy(df, unique_trade_date, rebalance_window, validation_wi
         start_date_index = end_date_index - validation_window*30 + 1
 
         historical_turbulence = df.iloc[start_date_index:(end_date_index + 1), :]
-        #historical_turbulence = df[(df.datadate<unique_trade_date[i - rebalance_window - validation_window]) & (df.datadate>=(unique_trade_date[i - rebalance_window - validation_window - 63]))]
-
 
         historical_turbulence = historical_turbulence.drop_duplicates(subset=['datadate'])
 
@@ -203,10 +210,12 @@ def run_ensemble_strategy(df, unique_trade_date, rebalance_window, validation_wi
             # then we tune up the turbulence_threshold, meaning we lower the risk
             turbulence_threshold = np.quantile(insample_turbulence.turbulence.values, 1)
         print("turbulence_threshold: ", turbulence_threshold)
+        file_object.write('\nturbulence_threshold: '+str(turbulence_threshold))
 
         ############## Environment Setup starts ##############
         ## training env
-        train = data_split(df, start=20090000, end=unique_trade_date[i - rebalance_window - validation_window])
+        train = data_split(df, start='2007-04-01', end=unique_trade_date[i - rebalance_window - validation_window])
+        #train = data_split(df, start=20070101, end=unique_trade_date[i - rebalance_window - validation_window])
         env_train = DummyVecEnv([lambda: StockEnvTrain(train)])
 
         ## validation env
@@ -219,33 +228,42 @@ def run_ensemble_strategy(df, unique_trade_date, rebalance_window, validation_wi
         ############## Environment Setup ends ##############
 
         ############## Training and Validation starts ##############
-        print("======Model training from: ", 20090000, "to ",
+        print("======Model training from: ", '2007-04-01', "to ",
               unique_trade_date[i - rebalance_window - validation_window])
-        # print("training: ",len(data_split(df, start=20090000, end=test.datadate.unique()[i-rebalance_window]) ))
+        file_object.write('\n======Model training from: 2007-04-01 to '+str(unique_trade_date[i - rebalance_window - validation_window]))
         # print("==============Model Training===========")
         print("======A2C Training========")
-        model_a2c = train_A2C(env_train, model_name="A2C_30k_dow_{}".format(i), timesteps=30000)
+        file_object.write('\n======A2C Training========')
+        model_a2c = train_A2C(env_train, model_name="A2C_30k_sp100_{}".format(i), timesteps=10)
         print("======A2C Validation from: ", unique_trade_date[i - rebalance_window - validation_window], "to ",
               unique_trade_date[i - rebalance_window])
+        file_object.write('\n======A2C Validation from: '+str(unique_trade_date[i - rebalance_window - validation_window])+" to "+str(unique_trade_date[i - rebalance_window]))
         DRL_validation(model=model_a2c, test_data=validation, test_env=env_val, test_obs=obs_val)
         sharpe_a2c = get_validation_sharpe(i)
         print("A2C Sharpe Ratio: ", sharpe_a2c)
-
+        file_object.write('\nA2C Sharpe Ratio: '+str(sharpe_a2c))
+        
         print("======PPO Training========")
-        model_ppo = train_PPO(env_train, model_name="PPO_100k_dow_{}".format(i), timesteps=100000)
+        file_object.write('\n======PPO Training========')
+        model_ppo = train_PPO(env_train, model_name="PPO_100k_sp100_{}".format(i), timesteps=10)
         print("======PPO Validation from: ", unique_trade_date[i - rebalance_window - validation_window], "to ",
               unique_trade_date[i - rebalance_window])
+        file_object.write('\n======PPO Validation from: '+str(unique_trade_date[i - rebalance_window - validation_window])+" to "+str(unique_trade_date[i - rebalance_window]))
         DRL_validation(model=model_ppo, test_data=validation, test_env=env_val, test_obs=obs_val)
         sharpe_ppo = get_validation_sharpe(i)
         print("PPO Sharpe Ratio: ", sharpe_ppo)
+        file_object.write('\nPPO Sharpe Ratio: '+str(sharpe_ppo))
 
         print("======DDPG Training========")
-        model_ddpg = train_DDPG(env_train, model_name="DDPG_10k_dow_{}".format(i), timesteps=10000)
-        #model_ddpg = train_TD3(env_train, model_name="DDPG_10k_dow_{}".format(i), timesteps=20000)
+        file_object.write('\n======DDPG Training========')
+        model_ddpg = train_DDPG(env_train, model_name="DDPG_10k_sp100_{}".format(i), timesteps=10)
         print("======DDPG Validation from: ", unique_trade_date[i - rebalance_window - validation_window], "to ",
               unique_trade_date[i - rebalance_window])
+        file_object.write('\n======DDPG Validation from: '+str(unique_trade_date[i - rebalance_window - validation_window])+" to "+str(unique_trade_date[i - rebalance_window]))
         DRL_validation(model=model_ddpg, test_data=validation, test_env=env_val, test_obs=obs_val)
         sharpe_ddpg = get_validation_sharpe(i)
+        print("DDPG Sharpe Ratio: ", sharpe_ddpg)
+        file_object.write('\nDDPG Sharpe Ratio: '+str(sharpe_ddpg))
 
         ppo_sharpe_list.append(sharpe_ppo)
         a2c_sharpe_list.append(sharpe_a2c)
@@ -265,7 +283,9 @@ def run_ensemble_strategy(df, unique_trade_date, rebalance_window, validation_wi
 
         ############## Trading starts ##############
         print("======Trading from: ", unique_trade_date[i - rebalance_window], "to ", unique_trade_date[i])
-        #print("Used Model: ", model_ensemble)
+        file_object.write('\n======Trading from: '+str(unique_trade_date[i - rebalance_window])+' to '+str(unique_trade_date[i]))
+        print("Used Model: ", model_ensemble)
+        file_object.write('\n'+str(model_ensemble))
         last_state_ensemble = DRL_prediction(df=df, model=model_ensemble, name="ensemble",
                                              last_state=last_state_ensemble, iter_num=i,
                                              unique_trade_date=unique_trade_date,
@@ -277,3 +297,5 @@ def run_ensemble_strategy(df, unique_trade_date, rebalance_window, validation_wi
 
     end = time.time()
     print("Ensemble Strategy took: ", (end - start) / 60, " minutes")
+    file_object.write('\nEnsemble Strategy took: '+str((end - start) / 60)+' minutes')
+    file_object.close()
